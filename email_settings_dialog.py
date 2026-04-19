@@ -3,8 +3,9 @@
 Окно настроек email
 """
 
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-                             QPushButton, QCheckBox, QMessageBox, QGroupBox, QFormLayout)
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QCheckBox, QMessageBox, QGroupBox, QFormLayout,
+                             QRadioButton, QButtonGroup)
 from PyQt5.QtCore import Qt
 import database as db
 
@@ -14,8 +15,8 @@ class EmailSettingsDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Настройки Email")
-        self.setMinimumSize(550, 500)
+        self.setWindowTitle("Настройки")
+        self.setMinimumSize(600, 650)
         self.setModal(True)
         
         self.init_ui()
@@ -43,6 +44,14 @@ class EmailSettingsDialog(QDialog):
         # Use TLS/STARTTLS
         self.use_tls_checkbox = QCheckBox("Использовать STARTTLS")
         smtp_layout.addRow("", self.use_tls_checkbox)
+        
+        # Кнопка теста отправки
+        test_btn_layout = QHBoxLayout()
+        test_btn_layout.addStretch()
+        self.btn_test = QPushButton("Тест отправки")
+        self.btn_test.clicked.connect(self.test_email)
+        test_btn_layout.addWidget(self.btn_test)
+        smtp_layout.addRow("", test_btn_layout)
         
         smtp_group.setLayout(smtp_layout)
         layout.addWidget(smtp_group)
@@ -78,13 +87,75 @@ class EmailSettingsDialog(QDialog):
         notify_group.setLayout(notify_layout)
         layout.addWidget(notify_group)
         
+        # Группа шифрования
+        encryption_group = QGroupBox("Шифрование")
+        encryption_layout = QVBoxLayout()
+        
+        # Уровень шифрования
+        level_label = QLabel("Уровень шифрования:")
+        encryption_layout.addWidget(level_label)
+        
+        self.encrypt_none_rb = QRadioButton("Без шифрования")
+        self.encrypt_email_rb = QRadioButton("Только настройки почты")
+        self.encrypt_all_rb = QRadioButton("Шифровать всю базу данных")
+        self.encrypt_email_rb.setChecked(True)  # по умолчанию
+        
+        # Группа кнопок уровня шифрования
+        self.level_button_group = QButtonGroup()
+        self.level_button_group.addButton(self.encrypt_none_rb)
+        self.level_button_group.addButton(self.encrypt_email_rb)
+        self.level_button_group.addButton(self.encrypt_all_rb)
+        
+        encryption_layout.addWidget(self.encrypt_none_rb)
+        encryption_layout.addWidget(self.encrypt_email_rb)
+        encryption_layout.addWidget(self.encrypt_all_rb)
+        
+        # Ключ шифрования
+        key_label = QLabel("Ключ шифрования:")
+        encryption_layout.addWidget(key_label)
+        
+        self.key_computer_rb = QRadioButton("Имя компьютера")
+        self.key_custom_rb = QRadioButton("Свой ключ")
+        self.key_computer_rb.setChecked(True)
+        
+        # Группа кнопок типа ключа
+        self.key_button_group = QButtonGroup()
+        self.key_button_group.addButton(self.key_computer_rb)
+        self.key_button_group.addButton(self.key_custom_rb)
+        
+        encryption_layout.addWidget(self.key_computer_rb)
+        encryption_layout.addWidget(self.key_custom_rb)
+        
+        # Поле для своего ключа
+        key_hbox = QHBoxLayout()
+        self.custom_key_edit = QLineEdit()
+        self.custom_key_edit.setPlaceholderText("Введите свой ключ шифрования")
+        self.custom_key_edit.setEnabled(False)
+        key_hbox.addWidget(self.custom_key_edit)
+        encryption_layout.addLayout(key_hbox)
+        
+        # Привязка активации поля
+        def update_key_field():
+            self.custom_key_edit.setEnabled(self.key_custom_rb.isChecked())
+        
+        self.key_computer_rb.toggled.connect(update_key_field)
+        self.key_custom_rb.toggled.connect(update_key_field)
+        
+        # Обновление доступности группы ключа в зависимости от уровня шифрования
+        self.encrypt_none_rb.toggled.connect(self._update_encryption_ui)
+        self.encrypt_email_rb.toggled.connect(self._update_encryption_ui)
+        self.encrypt_all_rb.toggled.connect(self._update_encryption_ui)
+        
+        encryption_group.setLayout(encryption_layout)
+        layout.addWidget(encryption_group)
+        
+        # Инициализируем состояние UI
+        self._update_encryption_ui()
+        
         # Кнопки
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
-        self.btn_test = QPushButton("Тест отправки")
-        self.btn_test.clicked.connect(self.test_email)
-        btn_layout.addWidget(self.btn_test)
         
         self.btn_save = QPushButton("Сохранить")
         self.btn_save.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px 16px;")
@@ -96,6 +167,17 @@ class EmailSettingsDialog(QDialog):
         btn_layout.addWidget(self.btn_cancel)
         
         layout.addLayout(btn_layout)
+    
+    def _update_encryption_ui(self):
+        """Обновить доступность элементов управления шифрованием"""
+        none_selected = self.encrypt_none_rb.isChecked()
+        # Если выбран "Без шифрования", отключаем выбор типа ключа и поле ввода
+        self.key_computer_rb.setEnabled(not none_selected)
+        self.key_custom_rb.setEnabled(not none_selected)
+        self.custom_key_edit.setEnabled(not none_selected and self.key_custom_rb.isChecked())
+        # Если отключено, сбрасываем выбор на "Имя компьютера" (опционально)
+        if none_selected:
+            self.key_computer_rb.setChecked(True)
     
     def load_settings(self):
         """Загрузить настройки из базы"""
@@ -110,6 +192,23 @@ class EmailSettingsDialog(QDialog):
             self.use_tls_checkbox.setChecked(bool(settings.get('use_tls', 1)))
             # enable_notifications может отсутствовать в старой базе
             self.enable_notifications_checkbox.setChecked(bool(settings.get('enable_notifications', 1)))
+            
+            # Настройки шифрования
+            encryption_level = settings.get('encryption_level', 'email_only')
+            if encryption_level == 'none':
+                self.encrypt_none_rb.setChecked(True)
+            elif encryption_level == 'all':
+                self.encrypt_all_rb.setChecked(True)
+            else:
+                self.encrypt_email_rb.setChecked(True)  # по умолчанию (email_only)
+            
+            encryption_key_type = settings.get('encryption_key_type', 'computer_name')
+            if encryption_key_type == 'custom':
+                self.key_custom_rb.setChecked(True)
+                # Не показываем хэш, оставляем поле пустым (ключ не хранится)
+                self.custom_key_edit.setText('')
+            else:
+                self.key_computer_rb.setChecked(True)
         else:
             # Настройки не найдены или не удалось расшифровать - показываем дефолтные (с отключёнными уведомлениями)
             self.smtp_server_edit.setText('smtp.example.com')
@@ -119,6 +218,12 @@ class EmailSettingsDialog(QDialog):
             self.from_address_edit.setText('DeviceDetect <alert@example.ru>')
             self.use_tls_checkbox.setChecked(True)
             self.enable_notifications_checkbox.setChecked(False)  # Отключено по умолчанию
+            # Шифрование по умолчанию
+            self.encrypt_email_rb.setChecked(True)
+            self.key_computer_rb.setChecked(True)
+        
+        # Обновляем состояние UI шифрования
+        self._update_encryption_ui()
     
     def save_settings(self):
         """Сохранить настройки в базу"""
@@ -151,8 +256,33 @@ class EmailSettingsDialog(QDialog):
             QMessageBox.warning(self, "Ошибка", "Укажите пароль")
             return
         
+        # Определение уровня шифрования
+        if self.encrypt_none_rb.isChecked():
+            encryption_level = 'none'
+        elif self.encrypt_all_rb.isChecked():
+            encryption_level = 'all'
+        else:
+            encryption_level = 'email_only'  # по умолчанию
+        
+        # Определение типа ключа
+        if self.key_custom_rb.isChecked():
+            encryption_key_type = 'custom'
+            custom_key = self.custom_key_edit.text().strip()
+            if not custom_key:
+                QMessageBox.warning(self, "Ошибка", "При выборе 'Свой ключ' необходимо ввести ключ")
+                return
+        else:
+            encryption_key_type = 'computer_name'
+            custom_key = ''
+        
         # Сохранение
-        db.update_email_settings(smtp_server, port, login, password, from_address, use_tls, enable_notifications)
+        db.update_email_settings(smtp_server, port, login, password, from_address, use_tls, enable_notifications,
+                                 encryption_level, encryption_key_type, custom_key)
+        
+        # Обновляем глобальный ключ в памяти, если используется пользовательский ключ
+        if encryption_key_type == 'custom' and custom_key:
+            db.set_custom_key(custom_key)
+        
         QMessageBox.information(self, "Готово", "Настройки сохранены")
         self.accept()
     
