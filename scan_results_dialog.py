@@ -3,11 +3,11 @@
 Окно результатов сканирования - показывает только новые и изменённые устройства
 """
 
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
                              QPushButton, QHeaderView, QMessageBox, QAbstractItemView, QLabel,
                              QGroupBox, QFormLayout)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 import database as db
 
 

@@ -661,7 +661,9 @@ def init_database():
             comment TEXT,
             created_at TEXT,
             updated_at TEXT,
-            encrypted_data TEXT
+            encrypted_data TEXT,
+            is_switch INTEGER DEFAULT 0,
+            is_gateway INTEGER DEFAULT 0
         )
     ''')
     
@@ -678,6 +680,22 @@ def init_database():
         cursor.execute('ALTER TABLE devices ADD COLUMN encrypted_data TEXT')
         conn.commit()
         print("База: добавлено поле 'encrypted_data' в devices")
+    except sqlite3.OperationalError:
+        pass  # Поле уже есть
+    
+    # Добавляем поле is_switch если нет
+    try:
+        cursor.execute('ALTER TABLE devices ADD COLUMN is_switch INTEGER DEFAULT 0')
+        conn.commit()
+        print("База: добавлено поле 'is_switch' в devices")
+    except sqlite3.OperationalError:
+        pass  # Поле уже есть
+    
+    # Добавляем поле is_gateway если нет
+    try:
+        cursor.execute('ALTER TABLE devices ADD COLUMN is_gateway INTEGER DEFAULT 0')
+        conn.commit()
+        print("База: добавлено поле 'is_gateway' в devices")
     except sqlite3.OperationalError:
         pass  # Поле уже есть
     
@@ -811,7 +829,7 @@ def get_all_devices():
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data FROM devices ORDER BY ip')
+        cursor.execute('SELECT ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data, is_switch, is_gateway FROM devices ORDER BY ip')
         devices = cursor.fetchall()
         conn.close()
         result = []
@@ -832,8 +850,8 @@ def get_all_devices():
         cursor.execute('SELECT ip, mac, hostname, comment, created_at, updated_at FROM devices ORDER BY ip')
         devices = cursor.fetchall()
         conn.close()
-        # Добавляем пустое поле ports
-        return [{'ip': d['ip'], 'mac': d['mac'], 'hostname': d['hostname'], 'ports': '', 'comment': d['comment'], 'created_at': d['created_at'], 'updated_at': d['updated_at']} for d in devices]
+        # Добавляем пустое поле ports и флаги
+        return [{'ip': d['ip'], 'mac': d['mac'], 'hostname': d['hostname'], 'ports': '', 'comment': d['comment'], 'created_at': d['created_at'], 'updated_at': d['updated_at'], 'is_switch': 0, 'is_gateway': 0} for d in devices]
 
 def get_device(ip):
     """Получить устройство по IP"""
@@ -841,7 +859,7 @@ def get_device(ip):
     cursor = conn.cursor()
     lookup_ip = _lookup_ip(ip)
     try:
-        cursor.execute('SELECT ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data FROM devices WHERE ip = ?', (lookup_ip,))
+        cursor.execute('SELECT ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data, is_switch, is_gateway FROM devices WHERE ip = ?', (lookup_ip,))
         device = cursor.fetchone()
         conn.close()
         if device:
@@ -860,10 +878,10 @@ def get_device(ip):
         device = cursor.fetchone()
         conn.close()
         if device:
-            return {'ip': device['ip'], 'mac': device['mac'], 'hostname': device['hostname'], 'ports': '', 'comment': device['comment'], 'created_at': device['created_at'], 'updated_at': device['updated_at']}
+            return {'ip': device['ip'], 'mac': device['mac'], 'hostname': device['hostname'], 'ports': '', 'comment': device['comment'], 'created_at': device['created_at'], 'updated_at': device['updated_at'], 'is_switch': 0, 'is_gateway': 0}
         return None
 
-def add_device(ip, mac='None', hostname='None', ports='', comment=''):
+def add_device(ip, mac='None', hostname='None', ports='', comment='', is_switch=0, is_gateway=0):
     """Добавить или обновить устройство"""
     conn = get_connection()
     cursor = conn.cursor()
@@ -879,55 +897,76 @@ def add_device(ip, mac='None', hostname='None', ports='', comment=''):
             'ports': ports,
             'comment': comment,
             'created_at': now,
-            'updated_at': now
+            'updated_at': now,
+            'is_switch': is_switch,
+            'is_gateway': is_gateway
         }
         encrypted = _encrypt_row(data_dict)
         if encrypted:
             # Сохраняем зашифрованные данные, остальные поля оставляем пустыми
             cursor.execute('''
-                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data)
-                VALUES (?, '', '', '', '', ?, ?, ?)
+                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, encrypted_data, is_switch, is_gateway)
+                VALUES (?, '', '', '', '', ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET
                     encrypted_data = excluded.encrypted_data,
-                    updated_at = excluded.updated_at
-            ''', (stored_ip, now, now, encrypted))
+                    updated_at = excluded.updated_at,
+                    is_switch = excluded.is_switch,
+                    is_gateway = excluded.is_gateway
+            ''', (stored_ip, now, now, encrypted, is_switch, is_gateway))
         else:
             # Если шифрование не удалось, сохраняем открыто, но ip храним как хэш
             cursor.execute('''
-                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, is_switch, is_gateway)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET
                     mac = excluded.mac,
                     hostname = excluded.hostname,
                     ports = excluded.ports,
-                    updated_at = excluded.updated_at
-            ''', (stored_ip, mac, hostname, ports, comment, now, now))
+                    updated_at = excluded.updated_at,
+                    is_switch = excluded.is_switch,
+                    is_gateway = excluded.is_gateway
+            ''', (stored_ip, mac, hostname, ports, comment, now, now, is_switch, is_gateway))
     else:
         stored_ip = ip  # оригинальный IP
         try:
             cursor.execute('''
-                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, is_switch, is_gateway)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET
                     mac = excluded.mac,
                     hostname = excluded.hostname,
                     ports = excluded.ports,
-                    updated_at = excluded.updated_at
-            ''', (stored_ip, mac, hostname, ports, comment, now, now))
+                    updated_at = excluded.updated_at,
+                    is_switch = excluded.is_switch,
+                    is_gateway = excluded.is_gateway
+            ''', (stored_ip, mac, hostname, ports, comment, now, now, is_switch, is_gateway))
         except sqlite3.OperationalError:
-            # Старая база без поля ports
-            cursor.execute('''
-                INSERT INTO devices (ip, mac, hostname, comment, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(ip) DO UPDATE SET
-                    mac = excluded.mac,
-                    hostname = excluded.hostname,
-                    updated_at = excluded.updated_at
-            ''', (stored_ip, mac, hostname, comment, now, now))
+            # Старая база без поля ports или новых полей
+            try:
+                cursor.execute('''
+                    INSERT INTO devices (ip, mac, hostname, comment, created_at, updated_at, is_switch, is_gateway)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ip) DO UPDATE SET
+                        mac = excluded.mac,
+                        hostname = excluded.hostname,
+                        updated_at = excluded.updated_at,
+                        is_switch = excluded.is_switch,
+                        is_gateway = excluded.is_gateway
+                ''', (stored_ip, mac, hostname, comment, now, now, is_switch, is_gateway))
+            except sqlite3.OperationalError:
+                # Старая база без полей is_switch/is_gateway
+                cursor.execute('''
+                    INSERT INTO devices (ip, mac, hostname, comment, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ip) DO UPDATE SET
+                        mac = excluded.mac,
+                        hostname = excluded.hostname,
+                        updated_at = excluded.updated_at
+                ''', (stored_ip, mac, hostname, comment, now, now))
     conn.commit()
     conn.close()
 
-def update_device(ip, mac=None, hostname=None, ports=None, comment=None):
+def update_device(ip, mac=None, hostname=None, ports=None, comment=None, is_switch=None, is_gateway=None):
     """Обновить устройство"""
     conn = get_connection()
     cursor = conn.cursor()
@@ -952,6 +991,10 @@ def update_device(ip, mac=None, hostname=None, ports=None, comment=None):
                     decrypted['ports'] = ports
                 if comment is not None:
                     decrypted['comment'] = comment
+                if is_switch is not None:
+                    decrypted['is_switch'] = is_switch
+                if is_gateway is not None:
+                    decrypted['is_gateway'] = is_gateway
                 # Шифруем обратно
                 new_encrypted = _encrypt_row(decrypted)
                 if new_encrypted:
@@ -965,7 +1008,9 @@ def update_device(ip, mac=None, hostname=None, ports=None, comment=None):
                     'mac': mac if mac is not None else '',
                     'hostname': hostname if hostname is not None else '',
                     'ports': ports if ports is not None else '',
-                    'comment': comment if comment is not None else ''
+                    'comment': comment if comment is not None else '',
+                    'is_switch': is_switch if is_switch is not None else 0,
+                    'is_gateway': is_gateway if is_gateway is not None else 0
                 }
                 new_encrypted = _encrypt_row(data_dict)
                 if new_encrypted:
@@ -976,22 +1021,27 @@ def update_device(ip, mac=None, hostname=None, ports=None, comment=None):
         else:
             # Зашифрованных данных нет - создаём новый словарь
             # Сначала получим текущие значения из обычных полей
-            cursor.execute('SELECT mac, hostname, ports, comment FROM devices WHERE ip = ?', (lookup_ip,))
+            cursor.execute('SELECT mac, hostname, ports, comment, is_switch, is_gateway FROM devices WHERE ip = ?', (lookup_ip,))
             row = cursor.fetchone()
             if row:
                 current_mac = row['mac'] if row['mac'] else ''
                 current_hostname = row['hostname'] if row['hostname'] else ''
                 current_ports = row['ports'] if row['ports'] else ''
                 current_comment = row['comment'] if row['comment'] else ''
+                current_is_switch = row['is_switch'] if row['is_switch'] is not None else 0
+                current_is_gateway = row['is_gateway'] if row['is_gateway'] is not None else 0
             else:
                 current_mac = current_hostname = current_ports = current_comment = ''
+                current_is_switch = current_is_gateway = 0
             
             # Обновляем переданными значениями
             data_dict = {
                 'mac': mac if mac is not None else current_mac,
                 'hostname': hostname if hostname is not None else current_hostname,
                 'ports': ports if ports is not None else current_ports,
-                'comment': comment if comment is not None else current_comment
+                'comment': comment if comment is not None else current_comment,
+                'is_switch': is_switch if is_switch is not None else current_is_switch,
+                'is_gateway': is_gateway if is_gateway is not None else current_is_gateway
             }
             new_encrypted = _encrypt_row(data_dict)
             if new_encrypted:
@@ -1015,6 +1065,12 @@ def update_device(ip, mac=None, hostname=None, ports=None, comment=None):
         if comment is not None:
             updates.append('comment = ?')
             values.append(comment)
+        if is_switch is not None:
+            updates.append('is_switch = ?')
+            values.append(is_switch)
+        if is_gateway is not None:
+            updates.append('is_gateway = ?')
+            values.append(is_gateway)
         updates.append('updated_at = ?')
         values.append(datetime.now().strftime("%Y-%m-%d %H:%M"))
         values.append(lookup_ip)
@@ -1043,7 +1099,7 @@ def delete_all_devices():
     conn.close()
 
 def save_devices(devices_dict):
-    """Сохранить словарь устройств (ip -> {mac, hostname, comment, ports})"""
+    """Сохранить словарь устройств (ip -> {mac, hostname, comment, ports, is_switch, is_gateway})"""
     conn = get_connection()
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1052,6 +1108,8 @@ def save_devices(devices_dict):
         hostname = data.get('hostname', 'None') or 'None'
         ports = data.get('ports', '') or ''
         comment = data.get('comment', '')
+        is_switch = data.get('is_switch', 0)
+        is_gateway = data.get('is_gateway', 0)
         
         if _should_encrypt_table():
             stored_ip = _hash_ip(ip)
@@ -1061,41 +1119,49 @@ def save_devices(devices_dict):
                 'mac': mac,
                 'hostname': hostname,
                 'ports': ports,
-                'comment': comment
+                'comment': comment,
+                'is_switch': is_switch,
+                'is_gateway': is_gateway
             }
             encrypted = _encrypt_row(data_dict)
             if encrypted:
                 # Сохраняем зашифрованные данные, очищаем открытые поля
                 cursor.execute('''
-                    INSERT INTO devices (ip, mac, hostname, ports, comment, encrypted_data, created_at, updated_at)
-                    VALUES (?, '', '', '', '', ?, ?, ?)
+                    INSERT INTO devices (ip, mac, hostname, ports, comment, encrypted_data, created_at, updated_at, is_switch, is_gateway)
+                    VALUES (?, '', '', '', '', ?, ?, ?, ?, ?)
                     ON CONFLICT(ip) DO UPDATE SET
                         encrypted_data = excluded.encrypted_data,
-                        updated_at = excluded.updated_at
-                ''', (stored_ip, encrypted, now, now))
+                        updated_at = excluded.updated_at,
+                        is_switch = excluded.is_switch,
+                        is_gateway = excluded.is_gateway
+                ''', (stored_ip, encrypted, now, now, is_switch, is_gateway))
             else:
                 # Если шифрование не удалось, сохраняем открыто, но ip храним как хэш
                 cursor.execute('''
-                    INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, is_switch, is_gateway)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(ip) DO UPDATE SET
                         mac = excluded.mac,
                         hostname = excluded.hostname,
                         ports = excluded.ports,
-                        updated_at = excluded.updated_at
-                ''', (stored_ip, mac, hostname, ports, comment, now, now))
+                        updated_at = excluded.updated_at,
+                        is_switch = excluded.is_switch,
+                        is_gateway = excluded.is_gateway
+                ''', (stored_ip, mac, hostname, ports, comment, now, now, is_switch, is_gateway))
         else:
             stored_ip = ip
             # Без шифрования
             cursor.execute('''
-                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO devices (ip, mac, hostname, ports, comment, created_at, updated_at, is_switch, is_gateway)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET
                     mac = excluded.mac,
                     hostname = excluded.hostname,
                     ports = excluded.ports,
-                    updated_at = excluded.updated_at
-            ''', (stored_ip, mac, hostname, ports, comment, now, now))
+                    updated_at = excluded.updated_at,
+                    is_switch = excluded.is_switch,
+                    is_gateway = excluded.is_gateway
+            ''', (stored_ip, mac, hostname, ports, comment, now, now, is_switch, is_gateway))
     conn.commit()
     conn.close()
 

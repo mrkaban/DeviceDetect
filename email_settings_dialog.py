@@ -3,10 +3,10 @@
 Окно настроек email
 """
 
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QCheckBox, QMessageBox, QGroupBox, QFormLayout,
                              QRadioButton, QButtonGroup)
-from PyQt5.QtCore import Qt
+from PySide6.QtCore import Qt
 import database as db
 
 
